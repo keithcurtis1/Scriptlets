@@ -6,148 +6,158 @@ on('ready', () => {
         TAG: '_roll20_internal_party_tag_',
 
         CSS: {
-            container: 'border:1px solid #444; background:#222; padding:10px; border-radius:6px;; color:#eee',
-            header: 'font-weight:bold; font-size:14px; margin-bottom:6px; color:#eee;',
-            list: 'margin:6px 0; padding:4px; background:#111; border:1px solid #333; ; color:#eee',
-            button: 'margin-top:8px; padding:6px 10px; background:#3a7bd5; color:#eee; border:none; border-radius:4px; text-align:center;'
+            container: 'border:1px solid #444;background:#222;padding:10px;border-radius:6px; color:#eee;',
+            header: 'font-weight:bold;font-size:14px;margin-bottom:6px;color:#eee;',
+            section: 'margin-top:6px;font-weight:bold;',
+            list: 'margin:6px 0;padding:4px;background:#111;border:1px solid #333;',
+            button: 'display:inline-block;margin:2px 2px;padding:4px 8px;background:#3a7bd5;color:#eee;border-radius:4px;text-align:center;',
+            small: 'font-size:11px;color:#ccc;margin-bottom:6px;'
         }
     };
 
     /* =========================
-       Utility Functions
+       Data Helpers
     ========================= */
 
- const getPartyCharacters = () => {
-    return findObjs({ type: 'character' }).filter(c => {
+    const hasTag = (c) => {
         let tags = c.get('tags');
-
         if (!tags) return false;
 
-        // Handle stringified JSON
         if (typeof tags === 'string') {
             try {
                 const parsed = JSON.parse(tags);
-                if (Array.isArray(parsed)) {
-                    return parsed.includes(SCRIPT.TAG);
-                }
-            } catch (e) {
-                // Not JSON, fall through
-            }
-
-            // Handle comma-delimited string
+                if (Array.isArray(parsed)) return parsed.includes(SCRIPT.TAG);
+            } catch (e) {}
             return tags.split(',').map(t => t.trim()).includes(SCRIPT.TAG);
         }
 
-        // Handle actual array (best case)
-        if (Array.isArray(tags)) {
-            return tags.includes(SCRIPT.TAG);
-        }
+        if (Array.isArray(tags)) return tags.includes(SCRIPT.TAG);
 
         return false;
-    });
-};
+    };
+
+    const getPartyCharacters = () =>
+        findObjs({ type: 'character' }).filter(hasTag);
 
     const getPlayerIdsFromCharacters = (characters) => {
         const ids = new Set();
 
         characters.forEach(c => {
-            const controlled = (c.get('controlledby') || '').split(',');
-            controlled.forEach(id => {
+            (c.get('controlledby') || '').split(',').forEach(id => {
                 id = id.trim();
-                if (id && id !== 'all') {
-                    ids.add(id);
-                }
+                if (id && id !== 'all') ids.add(id);
             });
         });
 
         return Array.from(ids);
     };
 
-    const getPlayerNames = (playerIds) => {
-        return playerIds.map(id => {
-            const p = getObj('player', id);
-            return p ? p.get('_displayname') : '(Unknown)';
-        });
-    };
+    const getPlayer = (id) => getObj('player', id);
+
+    /* =========================
+       UI Builders
+    ========================= */
 
     const buildHandoutQuery = () => {
         const handouts = findObjs({ type: 'handout' });
 
-        if (!handouts.length) {
-            return '?{No handouts available}';
-        }
+        if (!handouts.length) return '?{No handouts available}';
 
-        const options = handouts
-            .map(h => `${h.get('name')},${h.id}`)
-            .join('|');
-
-        return `?{Select Handout|${options}}`;
+        return `?{Choose Handout to Share|${handouts.map(h => `${h.get('name')},${h.id}`).join('|')}}`;
     };
 
-const renderUI = (playerNames, query) => {
+    const renderUI = () => {
 
-    const listItems = playerNames.length
-        ? playerNames.map(n => `<div>${n}</div>`).join('')
-        : '<div>(No players found)</div>';
+        const characters = getPartyCharacters();
+        const playerIds = getPlayerIdsFromCharacters(characters);
+        const query = buildHandoutQuery();
 
-    const button = `<a style="${SCRIPT.CSS.button}" href="${SCRIPT.CMD_ASSIGN} ${query}">Share Handout</a>`;
+        const characterNames = characters.length
+            ? characters.map(c => c.get('name')).join(', ')
+            : '(No party members found)';
 
-    const html = `<div style="${SCRIPT.CSS.container}"><div style="${SCRIPT.CSS.header}">Party Handout Sharing</div><div>Players:</div><div style="${SCRIPT.CSS.list}">${listItems}</div>${button}</div>`;
+        const playerButtons = playerIds.length
+            ? playerIds.map(id => {
+                const p = getPlayer(id);
+                const name = p ? p.get('_displayname') : '(Unknown)';
+                return `<a style="${SCRIPT.CSS.button}" href="${SCRIPT.CMD_ASSIGN} ${query} ${id}">${name}</a>`;
+            }).join('')
+            : '<div>(No players found)</div>';
 
-    sendChat('System', `/w gm ${html}`);
-};
+        const allButton = `<a style="${SCRIPT.CSS.button}" href="${SCRIPT.CMD_ASSIGN} ${query} all">Share to All</a>`;
 
+        const html =
+            `<div style="${SCRIPT.CSS.container}">` +
+                `<div style="${SCRIPT.CSS.header}">Party Handout Sharing</div>` +
+                `<div style="${SCRIPT.CSS.small}">Select a handout, then click a player to share individually, or use "Share to All" to grant access to the entire party.</div>` +
+                `<div style="${SCRIPT.CSS.section}">Party:</div>` +
+                `<div style="${SCRIPT.CSS.list}">${characterNames}</div>` +
+                `<div style="${SCRIPT.CSS.section}">Players:</div>` +
+                `<div style="${SCRIPT.CSS.list}">${playerButtons}${allButton}</div>` +
+            `</div>`;
 
-    const assignHandout = (handoutId) => {
+        sendChat('System', `/w gm ${html}`);
+    };
+
+    /* =========================
+       Permission Logic
+    ========================= */
+
+    const assignHandout = (handoutId, target) => {
+
         const handout = getObj('handout', handoutId);
         if (!handout) {
-            sendChat('System', `/w gm Invalid handout selected.`);
+            sendChat('System', `/w gm Invalid handout.`);
             return;
         }
 
         const characters = getPartyCharacters();
-        const playerIds = getPlayerIdsFromCharacters(characters);
+        const partyPlayerIds = getPlayerIdsFromCharacters(characters);
 
-        let current = handout.get('inplayerjournals') || '';
-        let existing = current ? current.split(',') : [];
+        let targets = [];
 
+        if (target === 'all') {
+            targets = partyPlayerIds;
+        } else {
+            targets = [target];
+        }
+
+        let existing = (handout.get('inplayerjournals') || '').split(',').filter(Boolean);
         const merged = new Set(existing);
 
-        playerIds.forEach(id => merged.add(id));
+        targets.forEach(id => merged.add(id));
 
         handout.set('inplayerjournals', Array.from(merged).join(','));
 
-        sendChat('System', `/w gm Handout "${handout.get('name')}" shared with ${playerIds.length} player(s).`);
+        sendChat(
+            'System',
+            `/w gm Handout "${handout.get('name')}" updated for ${targets.length} player(s).`
+        );
     };
 
     /* =========================
-       Command Handlers
+       Chat Handler
     ========================= */
 
     on('chat:message', (msg) => {
         if (msg.type !== 'api') return;
 
         if (msg.content.startsWith(SCRIPT.CMD_SHOW)) {
-
-            const characters = getPartyCharacters();
-            const playerIds = getPlayerIdsFromCharacters(characters);
-            const playerNames = getPlayerNames(playerIds);
-            const query = buildHandoutQuery();
-
-            renderUI(playerNames, query);
+            renderUI();
         }
 
         if (msg.content.startsWith(SCRIPT.CMD_ASSIGN)) {
 
             const parts = msg.content.split(' ');
             const handoutId = parts[1];
+            const target = parts[2];
 
-            if (!handoutId) {
-                sendChat('System', `/w gm No handout specified.`);
+            if (!handoutId || !target) {
+                sendChat('System', `/w gm Missing parameters.`);
                 return;
             }
 
-            assignHandout(handoutId);
+            assignHandout(handoutId, target);
         }
     });
 
