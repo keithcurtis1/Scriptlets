@@ -89,8 +89,7 @@ on('ready', () => {
         const html =
             `<div style="${SCRIPT.CSS.container}">` +
                 `<div style="${SCRIPT.CSS.header}">Party Handout Sharing</div>` +
-                `<div style="${SCRIPT.CSS.instructions}">Select a handout, then click a player to share individually, or use "Share to All" to grant access to the entire party.</div>` +
-                `<div style="${SCRIPT.CSS.section}">Party:</div>` +
+                `<div style="${SCRIPT.CSS.instructions}">Click a player button (or "Share to All"). You will then be prompted to choose which handout to share.</div>` +                `<div style="${SCRIPT.CSS.section}">Party:</div>` +
                 `<div style="${SCRIPT.CSS.list}">${characterNames}</div>` +
                 `<div style="${SCRIPT.CSS.section}">Players:</div>` +
                 `<div style="${SCRIPT.CSS.list}"><br>${playerButtons}${allButton}</div>` +
