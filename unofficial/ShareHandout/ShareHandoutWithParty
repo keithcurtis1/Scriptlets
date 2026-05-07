@@ -99,42 +99,81 @@ on('ready', () => {
         sendChat('System', `/w gm ${html}`);
     };
 
+
+
+const whisperHandoutLink = (playerId, handout) => {
+
+    const player = getObj('player', playerId);
+    if (!player) return;
+
+    const playerName = player.get('_displayname');
+
+    const handoutLink = `http://journal.roll20.net/handout/${handout.id}`;
+
+    const button =
+        `<a style="${SCRIPT.CSS.button}" href="${handoutLink}">${handout.get('name')}</a>`;
+
+    const html =
+        `<div style="${SCRIPT.CSS.container}">` +
+            `<div>The Gamemaster has shared a handout with you. Click below to open.</div>` +
+            `<div style="margin-top:6px;">${button}</div>` +
+        `</div>`;
+
+    sendChat('System', `/w "${playerName}" ${html}`);
+};
+
+
     /* =========================
        Permission Logic
     ========================= */
 
-    const assignHandout = (handoutId, target) => {
+const assignHandout = (handoutId, target) => {
 
-        const handout = getObj('handout', handoutId);
-        if (!handout) {
-            sendChat('System', `/w gm Invalid handout.`);
-            return;
-        }
+    const handout = getObj('handout', handoutId);
 
-        const characters = getPartyCharacters();
-        const partyPlayerIds = getPlayerIdsFromCharacters(characters);
+    if (!handout) {
+        sendChat('System', `/w gm Invalid handout.`);
+        return;
+    }
 
-        let targets = [];
+    const characters = getPartyCharacters();
+    const partyPlayerIds = getPlayerIdsFromCharacters(characters);
 
-        if (target === 'all') {
-            targets = partyPlayerIds;
-        } else {
-            targets = [target];
-        }
+    let targets = [];
 
-        let existing = (handout.get('inplayerjournals') || '').split(',').filter(Boolean);
-        const merged = new Set(existing);
+    if (target === 'all') {
+        targets = partyPlayerIds;
+    } else {
+        targets = [target];
+    }
 
-        targets.forEach(id => merged.add(id));
+    let existing =
+        (handout.get('inplayerjournals') || '')
+            .split(',')
+            .filter(Boolean);
 
-        handout.set('inplayerjournals', Array.from(merged).join(','));
+    const merged = new Set(existing);
 
-        sendChat(
-            'System',
-            `/w gm Handout "${handout.get('name')}" updated for ${targets.length} player(s).`
-        );
-    };
+    targets.forEach(id => merged.add(id));
 
+    handout.set(
+        'inplayerjournals',
+        Array.from(merged).join(',')
+    );
+
+    /* =========================
+       Whisper Links
+    ========================= */
+
+    targets.forEach(playerId => {
+        whisperHandoutLink(playerId, handout);
+    });
+
+    sendChat(
+        'System',
+        `/w gm Handout "${handout.get('name')}" updated for ${targets.length} player(s).`
+    );
+};
     /* =========================
        Chat Handler
     ========================= */
