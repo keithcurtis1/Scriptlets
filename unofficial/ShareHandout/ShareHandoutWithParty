@@ -66,38 +66,79 @@ on('ready', () => {
         return `?{Choose Handout to Share|${handouts.map(h => `${h.get('name')},${h.id}`).join('|')}}`;
     };
 
-    const renderUI = () => {
+const getPlayerIdsFromSelectedTokens = (selected) => {
 
-        const characters = getPartyCharacters();
-        const playerIds = getPlayerIdsFromCharacters(characters);
-        const query = buildHandoutQuery();
+    if (!selected || !selected.length) return [];
 
-        const characterNames = characters.length
-            ? characters.map(c => c.get('name')).join(', ')
-            : '(No party members found)';
+    const ids = new Set();
 
-        const playerButtons = playerIds.length
-            ? playerIds.map(id => {
-                const p = getPlayer(id);
-                const name = p ? p.get('_displayname') : '(Unknown)';
-                return `<a style="${SCRIPT.CSS.button}" href="${SCRIPT.CMD_ASSIGN} ${query} ${id}">${name}</a>`;
-            }).join('')
-            : '<div>(No players found)</div>';
+    selected.forEach(s => {
 
-        const allButton = `<a style="${SCRIPT.CSS.button}" href="${SCRIPT.CMD_ASSIGN} ${query} all">Share to All</a>`;
+        if (s._type !== 'graphic') return;
 
-        const html =
-            `<div style="${SCRIPT.CSS.container}">` +
-                `<div style="${SCRIPT.CSS.header}">Party Handout Sharing</div>` +
-                `<div style="${SCRIPT.CSS.instructions}">Click a player button (or "Share to All"). You will then be prompted to choose which handout to share.</div>` +                `<div style="${SCRIPT.CSS.section}">Party:</div>` +
-                `<div style="${SCRIPT.CSS.list}">${characterNames}</div>` +
-                `<div style="${SCRIPT.CSS.section}">Players:</div>` +
-                `<div style="${SCRIPT.CSS.list}"><br>${playerButtons}${allButton}</div>` +
-            `</div>`;
+        const token = getObj('graphic', s._id);
+        if (!token) return;
 
-        sendChat('System', `/w gm ${html}`);
-    };
+        const charId = token.get('represents');
+        if (!charId) return;
 
+        const character = getObj('character', charId);
+        if (!character) return;
+
+        (character.get('controlledby') || '')
+            .split(',')
+            .forEach(id => {
+                id = id.trim();
+                if (id && id !== 'all') {
+                    ids.add(id);
+                }
+            });
+    });
+
+    return Array.from(ids);
+};
+
+
+
+const renderUI = () => {
+
+    const characters = getPartyCharacters();
+    const playerIds = getPlayerIdsFromCharacters(characters);
+    const query = buildHandoutQuery();
+
+    const characterNames = characters.length
+        ? characters.map(c => c.get('name')).join(', ')
+        : '(No party members found)';
+
+    const playerButtons = playerIds.length
+        ? playerIds.map(id => {
+            const p = getPlayer(id);
+            const name = p ? p.get('_displayname') : '(Unknown)';
+            return `<a style="${SCRIPT.CSS.button}" href="${SCRIPT.CMD_ASSIGN} ${query} ${id}">${name}</a>`;
+        }).join('')
+        : '<div>(No players found)</div>';
+
+    const allButton =
+        `<a style="${SCRIPT.CSS.button}" href="${SCRIPT.CMD_ASSIGN} ${query} all">Share to All</a>`;
+
+    const selectedButton =
+        `<a style="${SCRIPT.CSS.button}" href="${SCRIPT.CMD_ASSIGN} ${query} selected">Share to Selected Tokens</a>`;
+
+    const clearButton =
+        `<a style="${SCRIPT.CSS.button}" href="${SCRIPT.CMD_ASSIGN} ${query} clear">Remove All Sharing</a>`;
+
+    const html =
+        `<div style="${SCRIPT.CSS.container}">` +
+            `<div style="${SCRIPT.CSS.header}">Party Handout Sharing</div>` +
+            `<div style="${SCRIPT.CSS.small}">Click a player button, "Share to All", or "Share to Selected Tokens". You will then be prompted to choose which handout to share.</div>` +
+            `<div style="${SCRIPT.CSS.section}">Party:</div>` +
+            `<div style="${SCRIPT.CSS.list}">${characterNames}</div>` +
+            `<div style="${SCRIPT.CSS.section}">Players:</div>` +
+            `<div style="${SCRIPT.CSS.list}">${playerButtons}${allButton}${selectedButton}${clearButton}</div>` +
+        `</div>`;
+
+    sendChat('System', `/w gm ${html}`);
+};
 
 
 const whisperHandoutLink = (playerId, handout) => {
@@ -126,12 +167,28 @@ const whisperHandoutLink = (playerId, handout) => {
        Permission Logic
     ========================= */
 
-const assignHandout = (handoutId, target) => {
+const assignHandout = (handoutId, target, selected) => {
 
     const handout = getObj('handout', handoutId);
 
     if (!handout) {
         sendChat('System', `/w gm Invalid handout.`);
+        return;
+    }
+
+    /* =========================
+       Clear Sharing
+    ========================= */
+
+    if (target === 'clear') {
+
+        handout.set('inplayerjournals', '');
+
+        sendChat(
+            'System',
+            `/w gm All sharing removed from "${handout.get('name')}".`
+        );
+
         return;
     }
 
@@ -141,10 +198,19 @@ const assignHandout = (handoutId, target) => {
     let targets = [];
 
     if (target === 'all') {
+
         targets = partyPlayerIds;
+
+    } else if (target === 'selected') {
+
+        targets = getPlayerIdsFromSelectedTokens(selected);
+
     } else {
+
         targets = [target];
     }
+
+    targets = [...new Set(targets)];
 
     let existing =
         (handout.get('inplayerjournals') || '')
@@ -172,8 +238,7 @@ const assignHandout = (handoutId, target) => {
         'System',
         `/w gm Handout "${handout.get('name')}" updated for ${targets.length} player(s).`
     );
-};
-    /* =========================
+};    /* =========================
        Chat Handler
     ========================= */
 
@@ -184,19 +249,22 @@ const assignHandout = (handoutId, target) => {
             renderUI();
         }
 
-        if (msg.content.startsWith(SCRIPT.CMD_ASSIGN)) {
+if (msg.content.startsWith(SCRIPT.CMD_ASSIGN)) {
 
-            const parts = msg.content.split(' ');
-            const handoutId = parts[1];
-            const target = parts[2];
+    const parts = msg.content.split(' ');
+    const handoutId = parts[1];
+    const target = parts[2];
 
-            if (!handoutId || !target) {
-                sendChat('System', `/w gm Missing parameters.`);
-                return;
-            }
+    if (!handoutId || !target) {
+        sendChat('System', `/w gm Missing parameters.`);
+        return;
+    }
 
-            assignHandout(handoutId, target);
-        }
-    });
+    assignHandout(
+        handoutId,
+        target,
+        msg.selected || []
+    );
+}    });
 
 });
