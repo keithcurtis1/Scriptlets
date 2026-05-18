@@ -1,7 +1,11 @@
+// Script:   Controllers
+// By:       Keith Curtis
+// Contact:  https://app.roll20.net/users/162065/keithcurtis
+
 const ControlledBy = (() => {
     'use strict';
 
-    const SCRIPT = 'ControlledBy';
+    const SCRIPT = 'Controllers';
     const VERSION = '1.0';
 
 const CSS = {
@@ -31,11 +35,11 @@ const CSS = {
         content += `<span style="${CSS.label}">Paths</span>`;
         content += makeButton(
             'all',
-            '!controlledby --paths --all'
+            '!controllers --paths --all'
         );
         content += makeButton(
             'none',
-            '!controlledby --paths --none'
+            '!controllers --paths --none'
         );
         content += `</div>`;
 
@@ -43,11 +47,11 @@ const CSS = {
         content += `<span style="${CSS.label}">Texts</span>`;
         content += makeButton(
             'all',
-            '!controlledby --texts --all'
+            '!controllers --texts --all'
         );
         content += makeButton(
             'none',
-            '!controlledby --texts --none'
+            '!controllers --texts --none'
         );
         content += `</div>`;
 
@@ -55,11 +59,11 @@ const CSS = {
         content += `<span style="${CSS.label}">Graphics</span>`;
         content += makeButton(
             'all',
-            '!controlledby --graphics --all'
+            '!controllers --graphics --all'
         );
         content += makeButton(
             'none',
-            '!controlledby --graphics --none'
+            '!controllers --graphics --none'
         );
         content += `</div>`;
 
@@ -68,11 +72,11 @@ content += `<div style="${CSS.row}">`;
 content += `<span style="${CSS.label}">Selected</span>`;
 content += makeButton(
     'all',
-    '!controlledby --selected --all'
+    '!controllers --selected --all'
 );
 content += makeButton(
     'none',
-    '!controlledby --selected --none'
+    '!controllers --selected --none'
 );
 content += `</div>`;
 
@@ -205,7 +209,7 @@ const processObjects = (selected, type, action) => {
             return;
         }
 
-        if (!msg.content.startsWith('!controlledby')) {
+        if (!msg.content.startsWith('!controllers')) {
             return;
         }
 
