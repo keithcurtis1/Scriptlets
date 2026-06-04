@@ -1,8 +1,8 @@
 # Twilight Sanctuary
 
-This scriptlet helps users run the Twilight Sanctuary feature of Twilight Domain Clerics in 5e and 5.5e D&D.
+This Roll20 scriptlet helps users run the Twilight Sanctuary feature of Twilight Domain Clerics in 5e and 5.5e D&D.
 It provides a control panel which displays the HP and TempHP of all defined party memebrs and lets the
-cleric "top them off" and the end of their turn. This will work on any combination of 5e and 5.5e characters.
+cleric "top them off" and the end of their turn. This will work on any combination of 5e and 5.5e characters, and you can define multiple Twilight Domain Clerics and their party members in one game.
 The code has instructions on commenting out the current HP display if a DM does not want their player to have that information.
 
 Type `!twilight` in chat to open the menu. All features are menu-driven.
