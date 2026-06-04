@@ -21,4 +21,4 @@ Type `!twilight` in chat to open the menu. All features are menu-driven.
 
 ---
 
-> 💡 **Tip:** Hover over the cleric's name in the menu to verify the level source and formula currently in use.
+> **Tip:** Hover over the cleric's name in the menu to verify the level source and formula currently in use.
