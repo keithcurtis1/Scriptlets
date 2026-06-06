@@ -3,6 +3,12 @@ var TwilightSanctuary = (() => {
   const STATE_KEY = 'TwilightSanctuary';
 
   /* ------------------------------------ */
+  /* CONFIGURATION                        */
+  /* ------------------------------------ */
+  const showHealth  = true; // true  → show current HP value in the tracked-character row
+  const showBloodied = true; // true  → colour HP red when bloodied; add ❤️ when critically low
+
+  /* ------------------------------------ */
   /* CENTRAL CSS (NO FLEX ALLOWED)        */
   /* ------------------------------------ */
   const CSS = {
@@ -30,51 +36,13 @@ var TwilightSanctuary = (() => {
   /* ------------------------------------ */
   /* BEACON / LEGACY DETECTION            */
   /* ------------------------------------ */
-  // Returns true if getSheetItem is available (Experimental API / Beacon sheets).
-  const isBeaconAvailable = () => typeof getSheetItem === "function";
-
+  /* NOTE: getSheetItem / setSheetItem    */
+  /* work on both the Default and         */
+  /* Experimental API servers. Roll20     */
+  /* falls back to legacy attribute funcs */
+  /* automatically on the Default server. */
+  /* No wrapper needed.                   */
   /* ------------------------------------ */
-  /* UNIFIED ATTRIBUTE ACCESSORS          */
-  /* ------------------------------------ */
-
-  /**
-   * getAttrValue(charId, attrName) → Promise<string|null>
-   *
-   * On the Experimental API (Beacon sheets) we use getSheetItem so that
-   * computed properties like hp and hp_temp are readable.
-   * On the Default API we fall back to the legacy findObjs approach.
-   */
-  const getAttrValue = (charId, attrName) => {
-    if (isBeaconAvailable()) {
-      return getSheetItem(charId, attrName).then(val => (val !== undefined && val !== null) ? String(val) : null);
-    }
-    // Legacy fallback
-    return new Promise(resolve => {
-      const a = findObjs({ type: "attribute", characterid: charId, name: attrName })[0];
-      resolve(a ? String(a.get("current")) : null);
-    });
-  };
-
-  /**
-   * setAttrValue(charId, attrName, value) → void
-   *
-   * On Beacon sheets we use setSheetItem directly.
-   * On the Default API we fall back to setting via the attribute object,
-   * creating it if it doesn't exist yet.
-   */
-  const setAttrValue = (charId, attrName, value) => {
-    if (isBeaconAvailable()) {
-      setSheetItem(charId, attrName, value);
-      return;
-    }
-    // Legacy fallback
-    let a = findObjs({ type: "attribute", characterid: charId, name: attrName })[0];
-    if (a) {
-      a.set("current", value);
-    } else {
-      createObj("attribute", { characterid: charId, name: attrName, current: value });
-    }
-  };
 
   /* ------------------------------------ */
   /* UTIL                                 */
@@ -132,14 +100,32 @@ var TwilightSanctuary = (() => {
     if (!char) return 0;
 
     if (getSheetType(char) === "2024") {
-      const level = await getAttrValue(char.id, "base_level");
+      const level = await safeGetSheetItem(char.id, "base_level");
       return level ? parseInt(level, 10) : 0;
     }
 
     // 2014 legacy: derive from class_display string
-    const classDisplay = await getAttrValue(char.id, "class_display") || "";
+    const classDisplay = await safeGetSheetItem(char.id, "class_display") || "";
     const match = classDisplay.match(/Twilight Domain Cleric\s+(\d{1,2})/i);
     return match ? parseInt(match[1], 10) : 0;
+  };
+
+  /**
+   * safeGetSheetItem(charId, attr, prop) → Promise<string>
+   *
+   * Wraps getSheetItem in a try/catch so that characters with no sheet data
+   * for a given attribute (e.g. hp_temp never set) return "0" instead of
+   * throwing "Cannot read properties of undefined".
+   */
+  const safeGetSheetItem = async (charId, attr, prop) => {
+    try {
+      const val = prop
+        ? await getSheetItem(charId, attr, prop)
+        : await getSheetItem(charId, attr);
+      return (val !== undefined && val !== null) ? String(val) : "0";
+    } catch (e) {
+      return "0";
+    }
   };
 
   const rollD6 = () => 1 + Math.floor(Math.random() * 6);
@@ -186,18 +172,49 @@ var TwilightSanctuary = (() => {
       const char = getObj("character", charId);
       if (!char) return "";
 
-      // Fetch temp HP for display. hp is available too but commented out below
-      // in case your DM doesn't want players seeing other characters' current HP.
-      // const hp   = (await getAttrValue(charId, "hp"))      || "0";
-      const temp = (await getAttrValue(charId, "hp_temp")) || "0";
+      // Fetch HP values — hp and hp_max only read when needed for display or bloodied logic.
+      // hp_max is not a standalone attribute on legacy sheets; the max value lives on
+      // the "hp" attribute itself and must be read via getSheetItem(charId, "hp", "max").
+      // Beacon sheets expose it as a separate "hp_max" named field, but also correctly
+      // return the max via the third argument form, so we use that form for both.
+      const temp   = parseInt((await safeGetSheetItem(charId, "hp_temp"))        || "0", 10);
+      const hp     = (showHealth || showBloodied) ? parseInt((await safeGetSheetItem(charId, "hp"))        || "0", 10) : 0;
+      const hpMax  = showBloodied                 ? parseInt((await safeGetSheetItem(charId, "hp", "max")) || "0", 10) : 0;
 
       const roll = rollD6() + level;
 
       // --apply subcommand replaces the old !setattr + !twilight --report chain.
       const applyCmd = "!twilight --apply " + charId + " " + roll;
 
-      const button    = buildButton("Apply",  applyCmd);
+      const button    = buildButton("&nbsp;✚&nbsp;", applyCmd);
       const removeBtn = buildButton("X", "!twilight --remove " + charId);
+
+      // --- HP display string ---
+      // CSS.values already contains a color declaration. To ensure the bloodied
+      // colour overrides correctly on both legacy and Beacon sheet renderers,
+      // we replace the existing color value in the style string rather than
+      // appending a second color rule (which legacy chat ignores).
+      let hpDisplay = "";
+      if (showHealth) {
+        let hpStyle = CSS.values;
+        let hpPrefix = "";
+
+        if (showBloodied && hpMax > 0) {
+          const bloodied = hp <= Math.floor(hpMax / 2);
+          const critical = bloodied && hp < 10;
+          if (bloodied) {
+            hpStyle = CSS.values.replace(/color:[^;]+;/, "color:#ff4444;");
+          }
+          if (critical) {
+            hpPrefix = "\u2764\uFE0F ";
+          }
+        }
+
+        hpDisplay = "<div style=\"" + hpStyle + "\">" + hpPrefix + "HP: " + hp + "</div> ";
+      }
+
+      // --- Temp HP display string ---
+      const tempDisplay = "<div style=\"" + CSS.values + "\">Temp: " + temp + "</div>";
 
       return (
         "<tr style=\"" + CSS.row + "\">" +
@@ -215,15 +232,15 @@ var TwilightSanctuary = (() => {
               sanitize(char.get("name")) +
             "</div>" +
 
-            // LINE 2: STATUS + CONTROLS
-            "<div>" +
-              "<div style=\"" + CSS.values + "\">" +
-                // "HP: " + hp + " | " +   // Uncomment if your DM is happy with this
-                "Temp: " + temp +
-              "</div> " +
-              button +
-              " " +
-              removeBtn +
+            // LINE 2: STATUS + CONTROLS (buttons float right)
+            "<div style=\"position:relative;\">" +
+              hpDisplay +
+              tempDisplay +
+              "<div style=\"position:absolute;top:0;right:0;\">" +
+                button +
+                " " +
+                removeBtn +
+              "</div>" +
             "</div>" +
 
           "</td>" +
@@ -353,7 +370,7 @@ var TwilightSanctuary = (() => {
     /**
      * --apply <charId> <value>
      *
-     * Sets hp_temp on the target character using the unified setAttrValue
+     * Sets hp_temp on the target character using setSheetItem.
      * helper (Beacon or legacy), then sends whisper notifications exactly
      * as the old --report subcommand did.
      *
@@ -370,8 +387,8 @@ var TwilightSanctuary = (() => {
       const player = getObj("player", playerid);
       if (!player) return;
 
-      // Set hp_temp — works on both 2014 and 2024 sheets.
-      setAttrValue(charId, "hp_temp", value);
+      // Set hp_temp — getSheetItem/setSheetItem work on both Default and Experimental API servers.
+      setSheetItem(charId, "hp_temp", value);
 
       const name = char ? sanitize(char.get("name")) : "Unknown";
 
