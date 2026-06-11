@@ -1,6 +1,9 @@
-var TwilightSanctuary = (() => {
+var HealthMonitor = (() => {
+const version = "1.0.0";
+//Changelog
+//1.0.0 New script from Twilight Sanctuary
 
-  const STATE_KEY = 'TwilightSanctuary';
+  const STATE_KEY = 'HealthMonitor';
 
   /* ------------------------------------ */
   /* CAMPAIGN MARKER CACHE                */
@@ -106,7 +109,7 @@ var TwilightSanctuary = (() => {
     const content = (typeof msg === "string" && !/^\s*</.test(msg))
       ? "<div style=\"" + CSS.wrap + "\"><div style=\"" + CSS.notice + "\">" + sanitize(msg) + "</div></div>"
       : msg;
-    sendChat("TwilightSanctuary", "/w \"" + player.get("_displayname") + "\" " + content);
+    sendChat("HealthMonitor", "/w \"" + player.get("_displayname") + "\" " + content, null, { noarchive: true });
   };
 
   const notifyChange = (playerid, char, field, oldVal, newVal) => {
@@ -120,7 +123,7 @@ var TwilightSanctuary = (() => {
           "<b>" + name + "</b> " + label + ": <b>" + oldVal + "</b> \u27A1 <b>" + newVal + "</b>" +
         "</div>" +
       "</div>";
-    sendChat("TwilightSanctuary", "/w \"" + player.get("_displayname") + "\" " + html, null, { noarchive: true });
+    sendChat("HealthMonitor", "/w \"" + player.get("_displayname") + "\" " + html, null, { noarchive: true });
     if (char) {
       (char.get("controlledby") || "").split(",").forEach(id => {
         id = id.trim();
@@ -897,7 +900,7 @@ var TwilightSanctuary = (() => {
   // This ensures the first menu render never pays the parse cost.
   on("ready", () => {
     getCampaignMarkersByTag();
-    log("[HealthMonitor] Campaign marker cache initialised (" + Object.keys(getCampaignMarkersByTag()).length + " markers).");
+    log("HealthMonitor v. " + version + " ready. Use !health to activate.");
   });
 
   return {};
