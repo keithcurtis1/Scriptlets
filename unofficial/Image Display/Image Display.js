@@ -21,6 +21,20 @@ var ImageDisplay = ImageDisplay || (function()
         );
     };
 
+const getSelectedImageURL = (msg) => {
+
+    if(!msg.selected || !msg.selected.length) {
+        return "";
+    }
+
+    let token = getObj("graphic", msg.selected[0]._id);
+
+    if(!token) {
+        return "";
+    }
+
+    return token.get("imgsrc") || "";
+};
 
     const validURL = (url) =>
     {
@@ -180,26 +194,29 @@ var ImageDisplay = ImageDisplay || (function()
         if(args[0] === "!display")
         {
 
-            let parts = args.slice(1).join(" ").split("|");
+let parts = args.slice(1).join(" ").split("|");
 
-            let url = parts[0];
-            let name = parts[1] || "Image Display";
+let url = (parts[0] || "").trim();
+let name = (parts[1] || "Image Display").trim();
 
-            createOrUpdate(url, name, false);
+if(!url) {
+    url = getSelectedImageURL(msg);
+}
+
+createOrUpdate(url,name,false);
         }
 
 
-        if(args[0] === "!display-confirm")
-        {
+if(args[0] === "!display-confirm") {
 
-            let parts = args.slice(1).join(" ").split("|");
+    let parts = args.slice(1).join(" ").split("|");
 
-            let url = decodeURIComponent(parts[0]);
-            let name = decodeURIComponent(parts[1]);
+    let url = parts[0] ? decodeURIComponent(parts[0]) : "";
+    let name = parts[1] ? decodeURIComponent(parts[1]) : "Image Display";
 
-            createOrUpdate(url, name, true);
+    createOrUpdate(url, name, true);
 
-        }
+}
 
     };
 
