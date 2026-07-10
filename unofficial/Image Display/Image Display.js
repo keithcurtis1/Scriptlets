@@ -33,8 +33,14 @@ const getSelectedImageURL = (msg) => {
         return "";
     }
 
-    return token.get("imgsrc") || "";
+    let url = token.get("imgsrc") || "";
+
+    return url.replace(
+        /\/(?:thumb|med|max|original)(\.[^?]+)(\?.*)?$/,
+        "/original$1$2"
+    );
 };
+
 
     const validURL = (url) =>
     {
