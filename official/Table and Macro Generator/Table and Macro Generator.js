@@ -6,6 +6,7 @@
 //       creation, GM control-panel handout UI
 
 
+
 const TableMacroBuilder = (() => {
   'use strict';
 
@@ -893,7 +894,7 @@ const TableMacroBuilder = (() => {
       if (args.help) return Commands.help(msg);
       if (args['debug-notes']) return Commands.debugNotes(msg);
       if (args['debug-gmnotes']) return Commands.debugGmNotes(msg);
-      if (args.scan || args.open === true) return Commands.scanAndOpen(msg);
+      if (args.scan || args.open === true) return Commands.scanAndOpen(msg, false);
       if (args['open-handout'] !== undefined) return Commands.openHandout(msg, args['open-handout']);
       if (args['load-table'] !== undefined) return Commands.loadTable(msg, args['load-table'], args['index']);
       if (args['set-mode'] !== undefined) return Commands.setMode(msg, args['set-mode'], args.join);
@@ -905,8 +906,10 @@ const TableMacroBuilder = (() => {
       if (args['create-combo-macro']) return Commands.createComboMacro(msg);
       if (args['create-choose-macro']) return Commands.createChooseMacro(msg);
 
-      // default: open panel
-      return Commands.scanAndOpen(msg);
+      // default: bare command with no flags — first thing the user sees,
+      // so this is the one case that still gets a chat notification (a
+      // link to the panel), since there's no panel open yet to look at.
+      return Commands.scanAndOpen(msg, true);
     },
 
     debugNotes: (msg) => {
@@ -961,11 +964,16 @@ const TableMacroBuilder = (() => {
       Output.send(msg.who, html);
     },
 
-    scanAndOpen: (msg) => {
+    scanAndOpen: (msg, showLink) => {
       delete State.cache().loaded[msg.playerid];
       HandoutIndex.scanAll((index) => {
         State.cache().handoutIndex = index;
         Panel.writeToHandout(msg.playerid);
+        if (showLink) {
+          Panel.ensureHandout((h) => {
+            Output.send(msg.who, `Click the link below to open the Table &amp; Macro Builder interface:<br><a href="https://journal.roll20.net/handout/${h.id}">Table &amp; Macro Builder</a>`);
+          });
+        }
       });
     },
 
