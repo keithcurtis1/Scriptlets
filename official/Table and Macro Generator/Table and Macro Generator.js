@@ -93,6 +93,11 @@ const TableMacroBuilder = (() => {
                 columnModes: {},
                 // per-table concat join-character code, keyed "handoutId::tableIndex"
                 joinModes: {},
+                // per-table user-assigned "virtual" title, keyed
+                // "handoutId::tableIndex" — persists across rescans/restarts,
+                // used in place of the detected title when set (e.g. when a
+                // table genuinely has no title in the source handout)
+                titleOverrides: {},
                 // currently loaded table, per-playerid so multiple GMs don't clobber each other
                 loaded: {}
               }
@@ -112,6 +117,7 @@ const TableMacroBuilder = (() => {
       s.cache.handoutIndex = s.cache.handoutIndex || {};
       s.cache.columnModes = s.cache.columnModes || {};
       s.cache.joinModes = s.cache.joinModes || {};
+      s.cache.titleOverrides = s.cache.titleOverrides || {};
       s.cache.loaded = s.cache.loaded || {};
     },
 
@@ -703,6 +709,7 @@ const TableMacroBuilder = (() => {
     scanAll: (callback) => {
       const handouts = findObjs({ _type: 'handout' });
       const index = {};
+      const overrides = State.cache().titleOverrides;
       let remaining = handouts.length;
 
       if (!remaining) { callback(index); return; }
@@ -716,7 +723,7 @@ const TableMacroBuilder = (() => {
               name: h.get('name'),
               tables: tables.map((t, i) => ({
                 index: i,
-                name: t.title || `Table ${i + 1}`,
+                name: overrides[`${h.id}::${i}`] || t.title || `Table ${i + 1}`,
                 dieNotation: t.dieNotation
               }))
             };
@@ -736,6 +743,8 @@ const TableMacroBuilder = (() => {
         const tables = TableExtractor.extractFromHtml(decoded);
         const table = tables[tableIndex] || null;
         if (table) {
+          const override = State.cache().titleOverrides[`${handoutId}::${tableIndex}`];
+          if (override) table.title = override;
           table.handoutId = handoutId;
           table.handoutName = h.get('name');
           table.handoutUrl = `http://journal.roll20.net/handout/${handoutId}`;
@@ -812,9 +821,11 @@ const TableMacroBuilder = (() => {
       return html;
     },
 
-    renderTablePreview: (tableObj) => {
-      if (!tableObj) return `<div style="${CSS.note}">No table loaded. Click a table name on the left.</div>`;
-      let html = `<div style="${CSS.sectionTitle}">${tableObj.title || '(untitled table)'}</div>`;
+    renderTablePreview: (loaded) => {
+      if (!loaded) return `<div style="${CSS.note}">No table loaded. Click a table name on the left.</div>`;
+      const tableObj = loaded.tableObj;
+      const retitleHref = `${commandName} --set-title ${loaded.handoutId} --index ${loaded.tableIndex} --title ?{New title for this table|${tableObj.title || ''}}`;
+      let html = `<div style="${CSS.sectionTitle}">${tableObj.title || '(untitled table)'} <a style="${CSS.button}float:right;" href="${retitleHref}">Retitle</a></div>`;
       html += `<div>Die: <b>${tableObj.dieNotation || '(not found — check header row)'}</b></div>`;
       html += `<table style="${CSS.previewTable}">`;
       html += `<tr><th style="${CSS.previewHeadCell}">${tableObj.dieNotation || '#'}</th>`;
@@ -847,7 +858,7 @@ const TableMacroBuilder = (() => {
 
       let panelHtml = `<table style="${CSS.columnsTable}"><tr>`;
       panelHtml += `<td style="${CSS.navCell}">${Panel.renderNav(cache.handoutIndex, loaded)}</td>`;
-      panelHtml += `<td style="${CSS.mainCell}">${Panel.renderTablePreview(loaded ? loaded.tableObj : null)}</td>`;
+      panelHtml += `<td style="${CSS.mainCell}">${Panel.renderTablePreview(loaded)}</td>`;
       panelHtml += '</tr></table>';
       panelHtml += Panel.renderHeader(loaded);
 
@@ -913,6 +924,7 @@ const TableMacroBuilder = (() => {
       if (args['open-handout'] !== undefined) return Commands.openHandout(msg, args['open-handout']);
       if (args['load-table'] !== undefined) return Commands.loadTable(msg, args['load-table'], args['index']);
       if (args['set-mode'] !== undefined) return Commands.setMode(msg, args['set-mode'], args.join);
+      if (args['set-title'] !== undefined) return Commands.setTitle(msg, args['set-title'], args['index'], args.title);
       if (args['display-table']) return Commands.displayTable(msg);
       if (args['create-table']) return Commands.createTable(msg);
       if (args['display-macro']) return Commands.displayMacro(msg);
@@ -1029,6 +1041,36 @@ const TableMacroBuilder = (() => {
         const cache = State.cache();
         cache.loaded[msg.playerid] = { handoutId, tableIndex, tableObj, output: null };
 
+        Panel.writeToHandout(msg.playerid);
+      });
+    },
+
+    // Persistent "virtual" title override for a table — used when a source
+    // table has no detectable title at all (or the detected one is wrong).
+    // Stored keyed by handoutId::tableIndex, so it survives rescans/restarts
+    // and is applied transparently everywhere a title is used (nav listing,
+    // panel preview, slug generation, macro {{name=}}).
+    setTitle: (msg, handoutId, tableIndexArg, newTitle) => {
+      const tableIndex = parseInt(tableIndexArg, 10);
+      const key = `${handoutId}::${tableIndex}`;
+      const cache = State.cache();
+      const trimmed = (newTitle || '').trim();
+
+      if (trimmed) {
+        cache.titleOverrides[key] = trimmed;
+      } else {
+        delete cache.titleOverrides[key];
+      }
+
+      HandoutIndex.getTable(handoutId, tableIndex, (tableObj) => {
+        if (!tableObj) {
+          Output.send(msg.who, 'Could not reload that table after retitling.');
+          return;
+        }
+        cache.loaded[msg.playerid] = { handoutId, tableIndex, tableObj, output: null };
+        if (cache.handoutIndex[handoutId] && cache.handoutIndex[handoutId].tables[tableIndex]) {
+          cache.handoutIndex[handoutId].tables[tableIndex].name = tableObj.title || `Table ${tableIndex + 1}`;
+        }
         Panel.writeToHandout(msg.playerid);
       });
     },
