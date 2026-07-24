@@ -1286,7 +1286,7 @@ const TableMacroBuilder = (() => {
   const handleInput = (msg) => {
     if (msg.type !== 'api') return;
     const parsed = Parser.parse(msg.content);
-    if (parsed.command !== commandName) return;
+    if (!parsed.command || parsed.command.toLowerCase() !== commandName.toLowerCase()) return;
     Commands.root(msg, parsed);
   };
 
