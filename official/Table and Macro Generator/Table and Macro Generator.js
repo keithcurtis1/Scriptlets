@@ -273,26 +273,40 @@ const TableMacroBuilder = (() => {
     },
 
     // Used for the table's display title: the nearest preceding heading OR
-    // paragraph that actually has text in it. Documents in progress often
-    // have a blank <p></p> or two (an empty paragraph return) between the
-    // intended title and the table — those are skipped rather than treated
-    // as "no title found". Also guards against a <p> that doesn't close
-    // until after the table starts (sloppy markup like
+    // paragraph that actually has text in it (nearest wins — this is the
+    // original, already-tested behavior, unchanged). A bolded line
+    // (<strong>/<b>) is ALSO accepted, but only when it sits immediately
+    // before the table with nothing but whitespace/<br> in between — bold
+    // text is used constantly for inline emphasis elsewhere in these
+    // documents, so without that restriction it picks up unrelated text
+    // from anywhere in the document. Documents in progress often have a
+    // blank <p></p> or two (an empty paragraph return) between the
+    // intended title and the table — those are skipped rather than
+    // treated as "no title found". Also guards against a block that
+    // doesn't close until after the table starts (sloppy markup like
     // "<p>Title<table>...</table></p>") — such a block would otherwise
     // swallow the entire table's text into the "title", so any block that
     // doesn't fully close before the table is skipped.
     precedingTitle: (html, beforeIndex) => {
-      const blockRe = /<(h[1-6]|p)[^>]*>([\s\S]*?)<\/\1>/gi;
+      const blockRe = /<(h[1-6]|p|strong|b)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>/gi;
       const nestedTagRe = /<(table|p|h[1-6])[\s>]/i;
       let m;
       let best = '';
       while ((m = blockRe.exec(html)) !== null) {
         if (m.index >= beforeIndex) break;
-        if (m.index + m[0].length > beforeIndex) continue;
+        const matchEnd = m.index + m[0].length;
+        if (matchEnd > beforeIndex) continue;
         // A legitimate one-line title shouldn't itself contain another
         // table/paragraph/heading tag — if it does, this match overran
         // past where it should have (malformed/unclosed source markup).
         if (nestedTagRe.test(m[2])) continue;
+
+        const tagName = m[1].toLowerCase();
+        if (tagName === 'strong' || tagName === 'b') {
+          const gap = html.slice(matchEnd, beforeIndex).replace(/<br\s*\/?>/gi, '').replace(/\s+/g, '');
+          if (gap !== '') continue;
+        }
+
         const text = HtmlUtil.cleanText(m[2]);
         if (text) best = text;
       }
@@ -894,6 +908,7 @@ const TableMacroBuilder = (() => {
       if (args.help) return Commands.help(msg);
       if (args['debug-notes']) return Commands.debugNotes(msg);
       if (args['debug-gmnotes']) return Commands.debugGmNotes(msg);
+      if (args['debug-handout'] !== undefined) return Commands.debugHandout(msg, args['debug-handout']);
       if (args.scan || args.open === true) return Commands.scanAndOpen(msg, false);
       if (args['open-handout'] !== undefined) return Commands.openHandout(msg, args['open-handout']);
       if (args['load-table'] !== undefined) return Commands.loadTable(msg, args['load-table'], args['index']);
@@ -928,6 +943,27 @@ const TableMacroBuilder = (() => {
           Logger.log(`RAW stored gmnotes (length ${str.length}, first 2000 chars):\n${str.slice(0, 2000)}`);
           Output.send(msg.who, `Raw GM Notes HTML (length ${str.length}) logged to the API console. Look for "RAW stored gmnotes".`);
         });
+      });
+    },
+
+    // Diagnostic: dump a specific (non-panel) handout's actual decoded
+    // gmnotes plus exactly what TableExtractor computes for it, so a
+    // reported title bug can be checked against the real stored HTML
+    // instead of a hand-reconstructed copy of it.
+    debugHandout: (msg, nameSubstring) => {
+      const needle = String(nameSubstring || '').toLowerCase();
+      const h = findObjs({ _type: 'handout' }).find(x => (x.get('name') || '').toLowerCase().includes(needle));
+      if (!h) {
+        Output.send(msg.who, `No handout found matching "${nameSubstring}".`);
+        return;
+      }
+      h.get('gmnotes', (gmnotes) => {
+        const decoded = HtmlUtil.safeDecodeURIComponent(gmnotes || '');
+        const tables = TableExtractor.extractFromHtml(decoded);
+        Logger.log(`DEBUG HANDOUT "${h.get('name')}" — decoded length ${decoded.length}`);
+        Logger.log(`DEBUG HANDOUT full decoded HTML:\n${decoded}`);
+        Logger.log(`DEBUG HANDOUT computed titles: ${JSON.stringify(tables.map(t => t.title))}`);
+        Output.send(msg.who, `Handout "${h.get('name')}" (decoded length ${decoded.length}, ${tables.length} table(s) found) logged to the API console. Look for "DEBUG HANDOUT".`);
       });
     },
 
