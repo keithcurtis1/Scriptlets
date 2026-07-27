@@ -764,11 +764,17 @@ const TableMacroBuilder = (() => {
       const cfg = State.config();
       let h = cfg.panelHandoutId ? getObj('handout', cfg.panelHandoutId) : null;
       if (!h) {
-        h = findObjs({ _type: 'handout', name: 'Table & Macro Builder' })[0];
+        // Check the new name first, then fall back to the old pre-rename
+        // name so existing installs don't end up with a duplicate handout.
+        h = findObjs({ _type: 'handout', name: '!Table & Macro Builder' })[0]
+          || findObjs({ _type: 'handout', name: 'Table & Macro Builder' })[0];
       }
       if (!h) {
-        h = createObj('handout', { name: 'Table & Macro Builder' });
-        Logger.log('Created "Table & Macro Builder" control panel handout.');
+        h = createObj('handout', { name: '!Table & Macro Builder' });
+        Logger.log('Created "!Table & Macro Builder" control panel handout.');
+      } else if (h.get('name') !== '!Table & Macro Builder') {
+        h.set('name', '!Table & Macro Builder');
+        Logger.log('Renamed control panel handout to "!Table & Macro Builder".');
       }
       cfg.panelHandoutId = h.id;
       callback(h);
@@ -785,7 +791,7 @@ const TableMacroBuilder = (() => {
         return `<a style="${style}" href="${commandName} ${args}">${label}</a>`;
       };
 
-      let html = `<div style="${CSS.headerRow}">Table &amp; Macro Builder ${btn('Help', '--help').replace('style="', 'style="float:right;')}</div>`;
+      let html = `<div style="${CSS.headerRow}">!Table &amp; Macro Builder ${btn('Help', '--help').replace('style="', 'style="float:right;')}</div>`;
       html += `<div style="${CSS.buttonRow}">`;
       html += btn('Display Rollable Table', '--display-table', hasLoadedTable);
       html += btn('Create Rollable Table', '--create-table', hasLoadedTable);
@@ -980,14 +986,14 @@ const TableMacroBuilder = (() => {
     },
 
     help: (msg) => {
-      let html = `<div style="${CSS.headerRow}">Table &amp; Macro Builder — Help</div>`;
+      let html = `<div style="${CSS.headerRow}">!Table &amp; Macro Builder — Help</div>`;
       html += `<div style="padding:6px;">`;
 
       html += `<div style="${CSS.sectionTitle}">What this does</div>`;
       html += `<div>Scans your game's handouts for tables (the kind with a die-roll header like "d20" or "d6+2" and a column of numbered results), and turns each one into a real Roll20 rollable table plus a ready-to-use macro — without hand-copying rows into a spreadsheet.</div>`;
 
       html += `<div style="${CSS.sectionTitle}">Getting started</div>`;
-      html += `<div>1. Run <code>!${scriptName}</code> in chat. This scans every handout in the game and opens the control panel — a handout named "Table &amp; Macro Builder". Open that handout and look at its <b>Notes</b> tab; that's where the panel lives.</div>`;
+      html += `<div>1. Run <code>!${scriptName}</code> in chat. This scans every handout in the game and opens the control panel — a handout named "!Table &amp; Macro Builder". Open that handout and look at its <b>Notes</b> tab; that's where the panel lives.</div>`;
       html += `<div>2. In the panel's left column, click <b>Rescan</b> any time you add or edit tables in your handouts. Rescanning also clears whatever table you had loaded, so you always start from a clean slate.</div>`;
       html += `<div>3. Click a table's name in the left column to load it into the panel.</div>`;
 
@@ -1019,7 +1025,7 @@ const TableMacroBuilder = (() => {
         Panel.writeToHandout(msg.playerid);
         if (showLink) {
           Panel.ensureHandout((h) => {
-            Output.send(msg.who, `Click the link below to open the Table &amp; Macro Builder interface:<br><a href="https://journal.roll20.net/handout/${h.id}">Table &amp; Macro Builder</a>`);
+            Output.send(msg.who, `Click the link below to open the !Table &amp; Macro Builder interface:<br><a href="https://journal.roll20.net/handout/${h.id}">!Table &amp; Macro Builder</a>`);
           });
         }
       });
@@ -1209,12 +1215,12 @@ const TableMacroBuilder = (() => {
       const info = Commands._sourceInfo(loaded);
       if (plan.type === 'single') {
         const text = MacroBuilder.singleTableMacro(plan.slug, plan.displayName, info.handoutName, info.href, plan.rollLabel);
-        sections.push({ headHtml: Commands._macroSectionHead(loaded, plan.displayName), bodyHtml: `<pre>${HtmlUtil.escapeHtml(text)}</pre>` });
+        sections.push({ headHtml: Commands._macroSectionHead(loaded, plan.displayName), bodyHtml: `<pre>${HtmlUtil.escapeHtml(text)}</pre><p><br></p>` });
       } else {
         const comboText = MacroBuilder.comboMacro(plan.comboName, plan.tables, info.href);
         const chooseText = MacroBuilder.chooseMacro(plan.comboName, plan.tables, info.href);
-        sections.push({ headHtml: Commands._macroSectionHead(loaded, plan.comboName), bodyHtml: `<pre>${HtmlUtil.escapeHtml(comboText)}</pre>` });
-        sections.push({ headHtml: Commands._macroSectionHead(loaded, `${plan.comboName}-Choose`), bodyHtml: `<pre>${HtmlUtil.escapeHtml(chooseText)}</pre>` });
+        sections.push({ headHtml: Commands._macroSectionHead(loaded, plan.comboName), bodyHtml: `<pre>${HtmlUtil.escapeHtml(comboText)}</pre><p><br></p>` });
+        sections.push({ headHtml: Commands._macroSectionHead(loaded, `${plan.comboName}-Choose`), bodyHtml: `<pre>${HtmlUtil.escapeHtml(chooseText)}</pre><p><br></p>` });
       }
 
       loaded.output = { sections };
