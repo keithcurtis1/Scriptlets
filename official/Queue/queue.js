@@ -20,14 +20,15 @@
 // 0.4.6 Players see the shared queue in chat by default (opt out in My settings)
 // 0.4.7 A player's chat copy of the queue shows X only on their own request
 // 0.4.8 Category editor on its own panel with compact controls and rename; gear button and tighter title in the queue header
+// 0.4.9 Target list: party characters first, then other players' tokens on the requester's page; own and All Players characters excluded
 
 const Queue = (() => {
   'use strict';
 
   // Config
   const scriptName = 'Queue';
-  const version = '0.4.8';
-  const lastUpdate = 1792082242;
+  const version = '0.4.9';
+  const lastUpdate = 1792118457;
   const schemaVersion = 0.4;
   const DEBUG = false;
 
@@ -278,9 +279,15 @@ const Queue = (() => {
     // IDs with no player object (players who left the game) are ignored.
     controllers: (tok) => {
       const c = getObj('character', tok.get('represents'));
-      return `${tok.get('controlledby') || ''},${c ? c.get('controlledby') || '' : ''}`
-        .split(',').map(x => x.trim()).filter(x => x && (x === 'all' || (getObj('player', x) && !playerIsGM(x))));
+      return TokenUtils.parseCtl(`${tok.get('controlledby') || ''},${c ? c.get('controlledby') || '' : ''}`);
     },
+
+    // Current non-GM player IDs in a controlledby string; "all" is kept so callers can reject it
+    parseCtl: (str) => (str || '').split(',').map(x => x.trim())
+      .filter(x => x && (x === 'all' || (getObj('player', x) && !playerIsGM(x)))),
+
+    // Target candidate: no All Players, and at least one controller other than the requester
+    otherPlayers: (ids, requester) => !ids.includes('all') && ids.some(id => id !== requester),
 
     // A token identifies a request only when the requester is its sole controller (never All Players)
     soleControl: (tok, pid) => {
@@ -365,10 +372,10 @@ const Queue = (() => {
   // Token used for a talk target: on the controlling player's page, else on the requester's page
   const TalkName = {
     token: (c, requester) => {
-      const owner = Util.onlinePlayers().map(p => p.id)
-        .find(id => !playerIsGM(id) && id !== requester && Util.ctrlIncludes(c.get('controlledby'), id));
-      return (owner && TokenUtils.findCharToken(c.id, Util.getPageForPlayer(owner))) ||
-        TokenUtils.findCharToken(c.id, Util.getPageForPlayer(requester)) || null;
+      const here = TokenUtils.findCharToken(c.id, Util.getPageForPlayer(requester));
+      if (here) return here;
+      const owner = TokenUtils.parseCtl(c.get('controlledby')).find(id => id !== 'all' && id !== requester);
+      return (owner && TokenUtils.findCharToken(c.id, Util.getPageForPlayer(owner))) || null;
     }
   };
 
@@ -650,25 +657,47 @@ const Queue = (() => {
     },
 
     // Characters of online players (including the requester's own), plus a token picker
+    // Party characters first, then other players' tokens on the requester's page.
+    // Anything controlled only by the requester, or by All Players, is left out.
     targetMenu: (pid, catIndex, cmdPrefix) => {
       const c = State.config().categories[catIndex];
       const prefix = cmdPrefix || `!queue --target ${catIndex}`;
-      const online = Util.onlinePlayers().filter(p => !playerIsGM(p.id)).map(p => p.id);
-      if (!Test.is(pid) && !online.includes(pid)) online.push(pid);
-      const labelFor = (ch) => {
-        const t = TalkName.token(ch, pid);
-        return (t && TokenUtils.tokenName(t)) || ch.get('name');
-      };
-      const chars = findObjs({ _type: 'character' })
-        .filter(ch => online.some(id => Util.ctrlIncludes(ch.get('controlledby'), id)))
-        .sort((a, b) => labelFor(a).localeCompare(labelFor(b)));
+      const page = Util.getPageForPlayer(pid);
+      const owners = (ids) => ids.filter(id => id !== 'all').map(Util.playerName).join(', ');
+      const byLabel = (a, b) => a[0].localeCompare(b[0]);
+      const seenChars = [];
 
-      const pcs = chars.length
-        ? Output.grid(chars.map(ch => {
-          const owners = online.filter(id => Util.ctrlIncludes(ch.get('controlledby'), id)).map(Util.playerName).join(', ');
-          return [Util.esc(labelFor(ch)), `${prefix} pc ${ch.id}`, CSS.btn, `Played by ${owners}`];
-        }))
-        : `<div style="${CSS.note}">No player characters were found. Characters must be controlled by a player by name, not set to All Players.</div>`;
+      const party = findObjs({ _type: 'character' })
+        .filter(ch => {
+          const inParty = ch.get('inParty');
+          return (inParty === true || inParty === 'true') && !ch.get('archived') &&
+            TokenUtils.otherPlayers(TokenUtils.parseCtl(ch.get('controlledby')), pid);
+        })
+        .map(ch => {
+          seenChars.push(ch.id);
+          const t = TokenUtils.findCharToken(ch.id, page);
+          const label = (t && TokenUtils.tokenName(t)) || ch.get('name');
+          return [Util.esc(label), `${prefix} pc ${ch.id}`, CSS.btn, `Party member. Played by ${owners(TokenUtils.parseCtl(ch.get('controlledby')))}`];
+        })
+        .sort(byLabel);
+
+      const onPage = TokenUtils.pageTokens(page)
+        .filter(t => {
+          if (!TokenUtils.otherPlayers(TokenUtils.controllers(t), pid)) return false;
+          const rep = t.get('represents');
+          if (rep) {
+            if (seenChars.includes(rep)) return false;
+            seenChars.push(rep);
+          }
+          return true;
+        })
+        .map(t => [Util.esc(TokenUtils.tokenName(t) || 'Unnamed token'), `${prefix} tok ${t.id}`, CSS.btn, `Played by ${owners(TokenUtils.controllers(t))}`])
+        .sort(byLabel);
+
+      const list = party.concat(onPage);
+      const pcs = list.length
+        ? Output.grid(list)
+        : `<div style="${CSS.note}">No party members, and no other players' tokens on your page.</div>`;
 
       // Entities keep sendChat from resolving the target reference when the menu is posted
       const more = Output.grid([
@@ -807,7 +836,7 @@ const Queue = (() => {
         `<p>To put the macro in your bar: open the Collection tab, find the ${MACRO_NAME} macro, and check <b>In Bar</b>.</p>` +
         `<p>You can have one request at a time. Choosing a new one replaces the old one and keeps your place.</p>` +
         `<p><b>Make urgent</b> (on your confirmation and in the menu) marks your request urgent and moves it to the top. <b>Make normal</b> returns it to its original place.</p>` +
-        `<p><b>Other...</b> asks you to type your own request. Requests ending in "..." (such as <b>Help someone...</b> and <b>Talk with...</b>) are listed together at the end of the menu and then ask which character the request involves: the characters of players who are online, including your own; <b>Other NPC</b>, which lets you click a token on the map; or <b>Type a name</b>, for a character with no token. The player of a chosen character is told about the request.</p>` +
+        `<p><b>Other...</b> asks you to type your own request. Requests ending in "..." (such as <b>Help someone...</b> and <b>Talk with...</b>) are listed together at the end of the menu and then ask which character the request involves: party members first, then other players' tokens on your page (your own characters are not listed); <b>Other NPC</b>, which lets you click a token on the map; or <b>Type a name</b>, for a character with no token. The player of a chosen character is told about the request.</p>` +
         `<p>Your request is listed under your character. If you have one of your tokens selected, that token and its name are used. Otherwise your character's token on the current page is used, and if you have several there you are asked which one is asking. If none is found, your player name is used. Tokens shared with other players, or set to All Players, are not used.</p>` +
         `<p><b>Withdraw</b> removes your request. If the GM shares the queue, <b>My settings</b> lets you choose whether you see it in chat and in the Queue handout.</p>` +
         H('GM') +
@@ -1328,20 +1357,20 @@ const Queue = (() => {
     talkTarget: (msg, tok, charId) => {
       const pid = msg.playerid;
       let name, tokenId = '', playerIds = [];
-      const online = Util.onlinePlayers().filter(p => !playerIsGM(p.id) && p.id !== pid).map(p => p.id);
+      // Notify every other controlling player, online or not
+      const others = (ids) => ids.filter(id => id !== 'all' && id !== pid);
 
       if (charId) {
         const c = getObj('character', charId);
         if (!c) return null;
-        playerIds = online.filter(id => Util.ctrlIncludes(c.get('controlledby'), id));
+        playerIds = others(TokenUtils.parseCtl(c.get('controlledby')));
         const t = TalkName.token(c, pid);
         name = (t && TokenUtils.tokenName(t)) || c.get('name');
         tokenId = t ? t.id : '';
       } else {
         name = tok.get('name') || 'Unnamed token';
         tokenId = tok.id;
-        const c = getObj('character', tok.get('represents'));
-        if (c) playerIds = online.filter(id => Util.ctrlIncludes(c.get('controlledby'), id));
+        playerIds = others(TokenUtils.controllers(tok));
       }
       return { name, tokenId, playerIds };
     }
