@@ -3,11 +3,15 @@
 // Contact:  https://app.roll20.net/users/162065/keithcurtis
 // Command:  !automation  (the old !TableMacroBuilder still works)
 // Changelog
-// 1.0.0 Table & Macro Builder (rollable tables and macros from handout
-//       tables), Reactions (list, reset and manage reaction tokens across
-//       pages), Reaction Builder (edit, preset, copy and clear reactions,
-//       create an invisible reaction token) and Help, all in the
-//       "!Automation Manager" handout
+// 1.0.0a First release as AutomationManager, all in the "!Automation Manager"
+//       handout:
+//       - Table & Macro Builder: rollable tables and macros from handout tables
+//       - Reactions: list of reaction tokens by page (collapsible, current page
+//         open), layer, rename, ping, auto/manual reset, Reset All Triggered,
+//         and Mark Reactions in Map Handout
+//       - Reaction Builder: edit, presets, copy to selected tokens, Clear All,
+//         and Create Token (invisible, trap, chest)
+//       - Help
 
 const AutomationManager = (() => {
   'use strict';
@@ -24,12 +28,19 @@ const AutomationManager = (() => {
   // of a library image, so the URL is converted to thumb.png when it is used.
   const INVISIBLE_TOKEN = {
     url: 'https://files.d20.io/images/55843112/Stn1H3N5s3fx_s1qmBt71A/original.png?1528667841',
-    name: 'Invisible Reaction Token',
-    size: 70
+    name: 'Invisible Reaction Token'
+  };
+  // Tokens the Create Token buttons can make; the picture is also the button.
+  const TOKEN_KINDS = {
+    invisible: Object.assign({ label: 'Invisible', hover: 'Create an invisible token with a reaction' }, INVISIBLE_TOKEN),
+    'trap-color': { url: 'https://files.d20.io/images/508726827/yIzmjauu6zdrTbJqUf7MDw/original.png?1795820873', name: 'Trap Token', hover: 'Create a trap token (color) with a reaction' },
+    'trap-bw': { url: 'https://files.d20.io/images/508726825/bgJ04vycz8mwu0RshHRMFw/original.png?1795820873', name: 'Trap Token', hover: 'Create a trap token (black and white) with a reaction' },
+    'chest-color': { url: 'https://files.d20.io/images/503139783/Ne-hVJKwvGYGl0510J3quQ/original.webp?1791102735', name: 'Chest Token', hover: 'Create a chest token (color) with a reaction' },
+    'chest-bw': { url: 'https://files.d20.io/images/508726829/8qbPvLlyyQmr4ml00ebL-Q/original.png?1795820877', name: 'Chest Token', hover: 'Create a chest token (black and white) with a reaction' }
   };
   const LEGACY_PANEL_NAMES = ['!Table & Macro Builder', 'Table & Macro Builder'];
-  const version = '1.0.0';
-  const lastUpdate = 1795640988;
+  const version = '1.0.0a';
+  const lastUpdate = 1795822986;
   const schemaVersion = 0.1;
 
   const DEBUG = false;
@@ -926,6 +937,32 @@ const AutomationManager = (() => {
       return value && typeof value === 'object' ? value : null;
     },
 
+    // Short description of what an unnamed token's reaction does
+    summarize: (enabled, base) => {
+      const parts = [];
+      const chat = enabled.find(e => e.type === 'chat');
+      if (chat) {
+        const lines = String(chat.payload || '').split(/\r?\n/).map(t => t.trim()).filter(Boolean);
+        const fx = lines.find(l => /^\/fx\s/i.test(l));
+        if (fx) parts.push(fx.replace(/^\/fx\s+(\S+).*$/i, '$1'));
+        const text = lines.find(l => !/^\/fx\s/i.test(l));
+        if (text) {
+          const m = /\{\{name=(.*?)\}\}/.exec(text);
+          parts.push(Reactions.truncate((m ? m[1] : text).trim(), 40));
+        }
+      }
+      const op = enabled.find(e => e.type === 'opacity');
+      if (op) {
+        const b = Math.round((Number.isFinite(parseFloat(base)) ? parseFloat(base) : 1) * 100);
+        const t = Math.round(parseFloat(op.payload) * 100);
+        if (b === 0 && t === 100) parts.push('appears (0% \u2192 100%)');
+        else if (b === 100 && t === 0) parts.push('vanishes (100% \u2192 0%)');
+        else if (b === 100) parts.push(`dims to ${t}%`);
+        else parts.push(`opacity ${b}% \u2192 ${Number.isFinite(t) ? t : '?'}%`);
+      }
+      return parts.join(' + ');
+    },
+
     describe: (token) => {
       const interactions = Reactions.parseInteractions(token.get('interactions'));
       const enabled = [];
@@ -940,6 +977,7 @@ const AutomationManager = (() => {
       return {
         id: token.id,
         name: token.get('name') || '',
+        summary: token.get('name') ? '' : Reactions.summarize(enabled, token.get('baseOpacity')),
         pageId: token.get('_pageid'),
         left: token.get('left'),
         top: token.get('top'),
@@ -968,8 +1006,8 @@ const AutomationManager = (() => {
       const pages = Object.keys(byPage).map(pageId => {
         const page = getObj('page', pageId);
         const items = byPage[pageId].sort((a, b) => {
-          const an = (a.name || '￿').toLowerCase();
-          const bn = (b.name || '￿').toLowerCase();
+          const an = (a.name || `￿${a.summary || ''}`).toLowerCase();
+          const bn = (b.name || `￿${b.summary || ''}`).toLowerCase();
           return an < bn ? -1 : an > bn ? 1 : (a.id < b.id ? -1 : 1);
         });
         return { pageId, name: page ? page.get('name') : `(unknown page ${pageId})`, items };
@@ -1132,6 +1170,54 @@ const AutomationManager = (() => {
       .map(o => getObj('graphic', o._id))
       .filter(t => t && t.get('_subtype') !== 'card'),
 
+    // Edge length of one grid cell on a page, in pixels (the page's grid
+    // size is stored in units of 70 px)
+    cellSize: (pageId) => {
+      const page = getObj('page', pageId);
+      const inc = page ? parseFloat(page.get('snapping_increment')) : NaN;
+      return Number.isFinite(inc) && inc > 0 ? Math.round(70 * inc * 100) / 100 : 70;
+    },
+
+    ANCHOR_TYPES: ['graphic', 'pin', 'door', 'window', 'path', 'pathv2'],
+
+    // Centre point of a selected object, as left/top on the page. Tokens and
+    // classic drawings report left/top; pins and pathv2 drawings report x/y;
+    // doors and windows report x/y on an inverted vertical axis (top = -y).
+    centerOf: (obj, type) => {
+      const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+      const read = (a, b) => {
+        const x = num(obj.get(a));
+        const y = num(obj.get(b));
+        return x !== null && y !== null ? { x, y } : null;
+      };
+      if (type === 'door' || type === 'window') {
+        const c = read('x', 'y');
+        return c ? { x: c.x, y: -c.y } : null;
+      }
+      if (type === 'pin' || type === 'pathv2') return read('x', 'y');
+      return read('left', 'top');
+    },
+
+    // What a new token is placed beside: the first selected token, else the
+    // first selected pin, door, window or drawing. null when nothing usable.
+    anchor: (msg) => {
+      const found = (msg.selected || [])
+        .filter(o => o && Builder.ANCHOR_TYPES.includes(o._type))
+        .map(o => ({ type: o._type, obj: getObj(o._type, o._id) }))
+        .filter(e => e.obj && !(e.type === 'graphic' && e.obj.get('_subtype') === 'card'));
+      const pick = found.find(e => e.type === 'graphic') || found[0];
+      if (!pick) return null;
+      const c = Builder.centerOf(pick.obj, pick.type);
+      const width = parseFloat(pick.obj.get('width'));
+      return {
+        type: pick.type,
+        pageId: pick.obj.get('_pageid'),
+        x: c ? c.x : null,
+        y: c ? c.y : null,
+        width: pick.type === 'graphic' && Number.isFinite(width) ? width : 0
+      };
+    },
+
     baseOpacity: (token) => {
       const b = parseFloat(token.get('baseOpacity'));
       return Number.isFinite(b) ? b : 1;
@@ -1260,6 +1346,7 @@ const AutomationManager = (() => {
     ['--create-macro', 'Create a GM-only Roll20 macro'],
     ['--react-refresh', 'Re-read the game and redraw the list'],
     ['--react-page', 'Expand or collapse the tokens on this page'],
+    ['--react-mark-maps', 'Put an asterisk after each map page name in the Map Handout that has reaction tokens'],
     ['--react-collapse-all', 'Collapse every page in the list'],
     ['--react-expand-all', 'Expand every page in the list'],
     ['--react-reset-all --confirm', 'Confirm: reset every manual-reset token that is currently triggered'],
@@ -1274,7 +1361,7 @@ const AutomationManager = (() => {
     ['--bld-load', 'Load the token selected on the map into the Reaction Builder'],
     ['--bld-unload', 'Unload the token from the builder'],
     ['--bld-template', 'Choose the chat template that wraps text lines: auto, traits or default'],
-    ['--bld-create', 'Create an invisible token with a harmless reaction, beside the selected token or at the page center, then ping everyone to it'],
+    ['--bld-create', 'Create a token with a harmless reaction, beside the selected token or at the page center, then ping everyone to it'],
     ['--bld-text', 'Add a line of chat text or a command'],
     ['--bld-fx', 'Set the FX line: choose an effect, a color and a target'],
     ['--bld-line-edit', 'Change this text line'],
@@ -1446,7 +1533,7 @@ const AutomationManager = (() => {
         [`<span style="${CSS.button}">Add FX</span>`, 'Builds an /fx line from an effect, a color and a target. Only shown while there is no FX line.'],
         [`<span style="${CSS.button}">Clear All</span>`, 'After a confirmation click, removes every reaction and returns the token to its untouched settings: automatic reset, not triggered, base opacity 100%.'],
         [`<span style="${CSS.button}">Copy To Selected Tokens</span>`, 'Copies the loaded token\'s whole setup to the tokens selected on the map, on one click, replacing their reactions.'],
-        [`<span style="${CSS.button}">Create Invisible Token</span>`, 'Places an invisible token beside the selected token, or at the center of the page, with a harmless reaction so it shows in the list. Everyone is pinged to it and it is loaded into the builder.']
+        [`Create Token: <span style="${CSS.button}">Invisible</span> and four pictures (trap and chest, color and black and white)`, 'Each places a 70 x 70 token on the token layer, beside the selected token or at the center of the page, with a harmless reaction so it shows in the list. Everyone is pinged to it and it is loaded into the builder. The Invisible button is text; the others are the pictures themselves.']
       ]);
 
       html += sub(CSS.helpSubReact, 'Presets');
@@ -1555,6 +1642,17 @@ const AutomationManager = (() => {
       return `<a style="${style}" title="Layer: ${layer.label}. Click to move this token to another layer" href="${commandName} --react-layer ${token.id} --to ?{Move to layer|${opts}}">${layer.letter}</a>`;
     },
 
+    // "Create Token:" label, a text button for the invisible token, and the
+    // four pictures that are themselves the buttons
+    createGroup: () => {
+      const pics = ['trap-color', 'trap-bw', 'chest-color', 'chest-bw'].map(k => {
+        const kind = TOKEN_KINDS[k];
+        return `<a href="${commandName} --bld-create ${k}" title="${kind.hover}" style="text-decoration:none;border:0;background:none;"><img src="${kind.url}" alt="${kind.name}" style="height:24px;width:auto;border:0;vertical-align:middle;margin:0 3px;"></a>`;
+      }).join('');
+      const text = `<a style="${CSS.button}" href="${commandName} --bld-create invisible" title="${TOKEN_KINDS.invisible.hover}">Invisible</a>`;
+      return `<span style="margin-left:6px;">Create Token: ${text}${pics}</span>`;
+    },
+
     renderBuilder: (playerId) => {
       const cache = State.cache();
       const esc = HtmlUtil.escapeHtml;
@@ -1568,7 +1666,8 @@ const AutomationManager = (() => {
 
       if (!token) {
         html += `<div>No token loaded. Select a token on the map and ${a('Load Selected', '--bld-load')} or click a row's load button above.</div>`;
-        html += `<div style="margin-top:3px;">${a('Create Invisible Token', '--bld-create')}</div>`;
+        html += Panel.renderStatus(playerId, null, 'bottom');
+        html += `<div style="margin-top:3px;">${Panel.createGroup()}</div>`;
       } else {
         const cur = Reactions.read(token);
         const manual = Reactions.isTrue(token.get('interactionManualReset'));
@@ -1607,7 +1706,8 @@ const AutomationManager = (() => {
 
         html += `<div style="margin-top:3px;">${a('Add Text', '--bld-text ?{Chat message or command|}')}`;
         if (!hasFx) html += a('Add FX', Builder.fxArgs(null));
-        html += `${a('Clear All', '--bld-clear all')}${a('Copy To Selected Tokens', '--bld-copy')}${a('Create Invisible Token', '--bld-create')}</div>`;
+        html += `${a('Clear All', '--bld-clear all')}${a('Copy To Selected Tokens', '--bld-copy')}${Panel.createGroup()}</div>`;
+        html += Panel.renderStatus(playerId, null, 'bottom');
         html += `<div style="${CSS.note}">In text, type {token_id}, {token_name}, {instigator_id} or {instigator_name} in plain braces.</div>`;
       }
 
@@ -1636,7 +1736,7 @@ const AutomationManager = (() => {
       return html;
     },
 
-    // Result line and confirmation bars, shown beside the bottom bar so they
+    // Result line and confirmation bars; the builder ones sit under its button row so they
     // are in view when a button in the builder is clicked.
     renderStatus: (playerId, data, spot) => {
       const cache = State.cache();
@@ -1679,7 +1779,11 @@ const AutomationManager = (() => {
       }
 
       html += `<div style="${CSS.note}">${data.total} token(s), ${data.resettable.length} triggered. Click a picture to ping everyone to the token; click a name to rename it.</div>`;
-      html += `<div style="margin:2px 0 4px 0;"><a style="${CSS.mini}" href="${commandName} --react-collapse-all">Collapse All</a><a style="${CSS.mini}" href="${commandName} --react-expand-all">Expand All</a></div>`;
+      const mapHandout = MapMarker.findHandout();
+      const markTitle = mapHandout
+        ? `Put an asterisk after each map page name in "${mapHandout.get('name')}" that has reaction tokens, and add a footnote`
+        : 'No Map Handout or Battle Map Scale handout was found';
+      html += `<div style="margin:2px 0 4px 0;overflow:hidden;"><a style="${CSS.mini}float:right;" title="${HtmlUtil.escapeHtml(markTitle)}" href="${commandName} --react-mark-maps">Mark Reactions in Map Handout</a><a style="${CSS.mini}" href="${commandName} --react-collapse-all">Collapse All</a><a style="${CSS.mini}" href="${commandName} --react-expand-all">Expand All</a></div>`;
       html += `<table style="${CSS.previewTable}"><tr>`;
       [['Load', true], ['Layer', true], ['', 'pic'], ['Token', false], ['Auto', true], ['State', true]].forEach(([h, narrow]) => {
         html += `<th style="${CSS.previewHeadCell}${narrow === 'pic' ? 'width:39px;min-width:39px;' : narrow ? 'width:1%;white-space:nowrap;' : ''}"${h === 'Auto' ? ' title="Automatically Reset?"' : ''}>${h}</th>`;
@@ -1696,7 +1800,8 @@ const AutomationManager = (() => {
         if (collapsed) return;
 
         pg.items.forEach(i => {
-          const label = esc(i.name || i.id);
+          const label = i.name ? esc(i.name) : i.summary ? `<i style="color:#555;">${esc(i.summary)}</i>` : esc(i.id);
+          const renameTitle = i.name ? 'Rename' : `Rename. ID: ${i.id}`;
           const thumb = Reactions.thumbUrl(i.imgsrc);
           const pic = thumb
             ? `<a href="${commandName} --react-ping ${i.id} --who all" style="text-decoration:none;">${Panel.fitImage(thumb, 35)}</a>`
@@ -1717,7 +1822,7 @@ const AutomationManager = (() => {
           html += `<td style="${CSS.cell}width:1%;white-space:nowrap;text-align:center;"><a style="${CSS.loadBtn}" title="Load this token into the Reaction Builder" href="${commandName} --bld-load ${i.id}">&#9660;</a></td>`;
           html += `<td style="${CSS.cell}width:1%;white-space:nowrap;text-align:center;">${Panel.layerButton({ id: i.id, layer: i.layer })}</td>`;
           html += `<td style="${CSS.cell}width:39px;min-width:39px;text-align:center;">${pic}</td>`;
-          html += `<td style="${CSS.cell}"><a style="color:#164B7A;text-decoration:none;" title="Rename" href="${commandName} --react-rename ${i.id} --name ?{Token name|${Builder.queryDefault(i.name)}}">${label}</a></td>`;
+          html += `<td style="${CSS.cell}"><a style="color:#164B7A;text-decoration:none;" title="${renameTitle}" href="${commandName} --react-rename ${i.id} --name ?{Token name|${Builder.queryDefault(i.name)}}">${label}</a></td>`;
           html += `<td style="${CSS.cell}width:1%;white-space:nowrap;text-align:center;">${box}</td>`;
           html += `<td style="${CSS.cell}width:1%;white-space:nowrap;">${stateHtml}</td>`;
           html += '</tr>';
@@ -1744,7 +1849,7 @@ const AutomationManager = (() => {
       if (cache.panelMode[playerId] === 'reactions') {
         const data = Reactions.scan();
         let reactHtml = Panel.renderHeader(loaded, 'reactions', data);
-        reactHtml += `<div style="padding:4px;">${Panel.renderStatus(playerId, data, 'top')}${Panel.renderReactions(playerId, data)}${Panel.renderBuilder(playerId)}${Panel.renderStatus(playerId, data, 'bottom')}</div>`;
+        reactHtml += `<div style="padding:4px;">${Panel.renderStatus(playerId, data, 'top')}${Panel.renderReactions(playerId, data)}${Panel.renderBuilder(playerId)}</div>`;
         return Output.wrap(Panel.addTitles(reactHtml));
       }
 
@@ -1795,6 +1900,113 @@ const AutomationManager = (() => {
     };
   })();
   // Commands
+  // Marks the pages that have reaction tokens in a handout that lists the
+  // map pages as bullets ("Map Handout" or "Battle Map Scale"): an asterisk
+  // after the page name, plus one italic footnote at the end. Nothing else
+  // in the handout is touched.
+  const MapMarker = {
+    HANDOUT_NAMES: ['Map Handout', 'Battle Map Scale'],
+    FOOTNOTE: '*This page contains tokens that have Reactions. In most cases, the Reaction will be marked on the GM layer.',
+    FOOTNOTE_RE: /<p>\s*<em>\s*\*This page contains tokens that have Reactions\.[\s\S]*?<\/em>\s*<\/p>/,
+
+    findHandout: () => {
+      const all = findObjs({ _type: 'handout' });
+      for (const wanted of MapMarker.HANDOUT_NAMES) {
+        const hit = all.find(h => String(h.get('name') || '').trim().toLowerCase() === wanted.toLowerCase());
+        if (hit) return hit;
+      }
+      return null;
+    },
+
+    decode: (html) => String(html)
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#(\d+);/g, (m, n) => String.fromCharCode(parseInt(n, 10))),
+
+    // case, spacing, punctuation and parentheses do not matter
+    normalize: (text) => MapMarker.decode(String(text).replace(/<[^>]*>/g, ''))
+      .toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim(),
+
+    // Returns { html, matched, marked, changed, listed } for one block of HTML.
+    // pageMap: normalized name -> { name, hasReactions }
+    process: (html, pageMap) => {
+      const result = { matched: 0, marked: 0, changed: 0, listed: {} };
+      let out = String(html).replace(/(<li\b[^>]*>)([\s\S]*?)(<\/li>)/gi, (whole, open, inner, close) => {
+        const visible = MapMarker.decode(inner.replace(/<[^>]*>/g, '')).trim();
+        const hadStar = /\*$/.test(visible);
+        const entry = pageMap[MapMarker.normalize(visible.replace(/\*+$/, ''))];
+        if (!entry) return whole;
+        result.matched += 1;
+        result.listed[MapMarker.normalize(entry.name)] = true;
+        const tail = /(?:\s|&nbsp;|<br\s*\/?>)*$/.exec(inner)[0].length;
+        const at = inner.length - tail;
+        let next = inner;
+        if (entry.hasReactions && !hadStar) {
+          next = `${inner.slice(0, at)}*${inner.slice(at)}`;
+          result.changed += 1;
+        } else if (!entry.hasReactions && hadStar) {
+          const star = inner.lastIndexOf('*');
+          next = `${inner.slice(0, star)}${inner.slice(star + 1)}`;
+          result.changed += 1;
+        }
+        if (entry.hasReactions) result.marked += 1;
+        return `${open}${next}${close}`;
+      });
+      const hadFootnote = MapMarker.FOOTNOTE_RE.test(out);
+      const want = result.marked > 0;
+      if (hadFootnote && !want) { out = out.replace(MapMarker.FOOTNOTE_RE, ''); result.changed += 1; }
+      if (want && !hadFootnote) { out += `<p><em>${MapMarker.FOOTNOTE}</em></p>`; result.changed += 1; }
+      result.html = out;
+      return result;
+    },
+
+    // Every page in the game, flagged by whether the list has tokens on it
+    pageMap: () => {
+      const withTokens = {};
+      Reactions.scan().pages.forEach(pg => { withTokens[pg.pageId] = true; });
+      const map = {};
+      findObjs({ _type: 'page' }).forEach(pg => {
+        const key = MapMarker.normalize(pg.get('name') || '');
+        if (!key) return;
+        const has = !!withTokens[pg.id];
+        if (!map[key]) map[key] = { name: pg.get('name'), hasReactions: has };
+        else if (has) map[key].hasReactions = true;
+      });
+      return map;
+    },
+
+    // callback(noteText)
+    run: (callback) => {
+      const handout = MapMarker.findHandout();
+      if (!handout) return callback(`No handout named ${MapMarker.HANDOUT_NAMES.map(n => `"${n}"`).join(' or ')} was found.`);
+      const hname = handout.get('name');
+      const pageMap = MapMarker.pageMap();
+      const fields = ['notes', 'gmnotes'];
+      const tryField = (index) => {
+        if (index >= fields.length) return callback(`No bullet in the Notes or GM Notes of "${hname}" matches a map page name.`);
+        const field = fields[index];
+        handout.get(field, (raw) => {
+          const html = String(raw || '');
+          const res = MapMarker.process(html, pageMap);
+          if (!res.matched) return tryField(index + 1);
+          if (res.changed) handout.set(field, res.html);
+          const missing = Object.keys(pageMap)
+            .filter(k => pageMap[k].hasReactions && !res.listed[k])
+            .map(k => pageMap[k].name);
+          let text = res.changed
+            ? `${hname} (${field === 'notes' ? 'Notes' : 'GM Notes'}): ${res.marked} page(s) marked.`
+            : `${hname} (${field === 'notes' ? 'Notes' : 'GM Notes'}): already up to date, ${res.marked} page(s) marked.`;
+          if (missing.length) text += ` Has reaction tokens but is not listed: ${missing.join(', ')}.`;
+          return callback(text);
+        });
+      };
+      tryField(0);
+    }
+  };
+
   const Commands = {
 
     root: (msg, parsed) => {
@@ -1810,6 +2022,7 @@ const AutomationManager = (() => {
       if (args['react-toggle'] !== undefined) return Commands.reactToggle(msg, args['react-toggle']);
       if (args['react-ping'] !== undefined) return Commands.reactPing(msg, args['react-ping'], args.who);
       if (args['react-page'] !== undefined) return Commands.reactPage(msg, args['react-page']);
+      if (args['react-mark-maps']) return Commands.reactMarkMaps(msg);
       if (args['react-collapse-all']) return Commands.reactPagesAll(msg, true);
       if (args['react-expand-all']) return Commands.reactPagesAll(msg, false);
       if (args['react-reset-all']) return Commands.reactResetAll(msg, args.confirm === true);
@@ -1847,6 +2060,18 @@ const AutomationManager = (() => {
       cache.reactionConfirm[msg.playerid] = false;
       cache.reactionNotes[msg.playerid] = '';
       Panel.writeToHandout(msg.playerid);
+    },
+
+    reactMarkMaps: (msg) => {
+      const cache = State.cache();
+      const pid = msg.playerid;
+      cache.panelMode[pid] = 'reactions';
+      cache.reactionConfirm[pid] = false;
+      MapMarker.run((note) => {
+        cache.reactionNotes[pid] = note;
+        cache.noteSpot[pid] = 'top';
+        Panel.writeToHandout(pid);
+      });
     },
 
     reactPage: (msg, pageId) => {
@@ -2072,34 +2297,41 @@ const AutomationManager = (() => {
       }
 
       if (key === 'bld-create') {
-        const first = Builder.selectedGraphics(msg)[0];
+        const kind = TOKEN_KINDS[text(args[key])] || TOKEN_KINDS.invisible;
+        const anchor = Builder.anchor(msg);
         let pageId;
         let left;
         let top;
-        if (first) {
-          // to the right of the first selected token
-          pageId = first.get('_pageid');
-          left = first.get('left') + (first.get('width') || 70) / 2 + INVISIBLE_TOKEN.size / 2;
-          top = first.get('top');
+        let cell;
+        let extra = '';
+        if (anchor && anchor.x !== null) {
+          // one cell to the right: touching a token's right edge, or one
+          // cell from the centre point of a pin, door, window or drawing
+          pageId = anchor.pageId;
+          cell = Builder.cellSize(pageId);
+          left = anchor.type === 'graphic' ? anchor.x + anchor.width / 2 + cell / 2 : anchor.x + cell;
+          top = anchor.y;
         } else {
           // centre of the page the GM is on
-          pageId = getPageForPlayer(pid);
+          pageId = anchor ? anchor.pageId : getPageForPlayer(pid);
+          cell = Builder.cellSize(pageId);
           const page = getObj('page', pageId);
           left = ((page && parseFloat(page.get('width'))) || 25) * 35;
           top = ((page && parseFloat(page.get('height'))) || 25) * 35;
+          if (anchor) extra = ` The position of the selected ${anchor.type} could not be read, so it was placed at the page center.`;
         }
         let created = null;
         try {
           created = createObj('graphic', {
             _pageid: pageId,
             _subtype: 'token',
-            imgsrc: INVISIBLE_TOKEN.url.replace(/\/(original|max|med)\./, '/thumb.'),
+            imgsrc: kind.url.replace(/\/(original|max|med)\./, '/thumb.'),
             left,
             top,
-            width: INVISIBLE_TOKEN.size,
-            height: INVISIBLE_TOKEN.size,
+            width: cell,
+            height: cell,
             layer: 'objects',
-            name: INVISIBLE_TOKEN.name
+            name: kind.name
           });
         } catch (err) {
           Logger.error(`createObj failed: ${err}`);
@@ -2114,8 +2346,8 @@ const AutomationManager = (() => {
         cache.builder[pid] = created.id;
         sendPing(left, top, pageId, pid, true);
         return done(r.ok
-          ? `Created ${INVISIBLE_TOKEN.name} and loaded it into the builder.`
-          : `Created ${INVISIBLE_TOKEN.name}, but its reaction did not read back as written, so it may be missing from the list.`);
+          ? `Created ${kind.name} and loaded it into the builder.${extra}`
+          : `Created ${kind.name}, but its reaction did not read back as written, so it may be missing from the list.${extra}`);
       }
 
       // ---- everything below works on the loaded token
@@ -2620,7 +2852,8 @@ const AutomationManager = (() => {
     WeightEngine,
     MacroBuilder,
     Reactions,
-    Builder
+    Builder,
+    MapMarker
   };
 
 })();
